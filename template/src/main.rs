@@ -15,7 +15,7 @@ use crossterm::terminal::{
 use ratatui::backend::CrosstermBackend;
 use ratatui::Terminal;
 
-use model::{App, Focus};
+use model::{App, Focus, Tab};
 use theme::{Palette, Theme};
 
 fn main() -> io::Result<()> {
@@ -113,6 +113,14 @@ fn handle_key(app: &mut App, key: KeyEvent, prev_g: &mut bool) -> bool {
         }
         KeyCode::Char('l') | KeyCode::Right => {
             app.focus = Focus::Detail;
+            *prev_g = false;
+            false
+        }
+        KeyCode::Tab => {
+            app.tab = match app.tab {
+                Tab::Overview => Tab::Logs,
+                Tab::Logs => Tab::Overview,
+            };
             *prev_g = false;
             false
         }
