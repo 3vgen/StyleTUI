@@ -1,12 +1,13 @@
-//! Отрисовка: вкладки, список сервисов, панель деталей (gauge + sparkline),
-//! логи, статус-бар, оверлей справки, тост.
+//! Отрисовка: заголовок, вкладки, три колонки (список / детали / бар-чарт),
+//! линейный график, логи, статус-бар, оверлей справки, тост.
 
 use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
 use ratatui::style::Color;
+use ratatui::symbols::Marker;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{
-    Block, Borders, Clear, Gauge, List, ListItem, ListState, Padding, Paragraph, Sparkline, Tabs,
-    Wrap,
+    Axis, Bar, BarChart, Block, Borders, Chart, Clear, Dataset, Gauge, GraphType, List, ListItem,
+    ListState, Padding, Paragraph, Sparkline, Tabs, Wrap,
 };
 use ratatui::Frame;
 
@@ -22,22 +23,21 @@ pub fn draw(frame: &mut Frame, app: &mut App, theme: &Theme) {
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(1),
+            Constraint::Length(1),
             Constraint::Min(0),
             Constraint::Length(1),
         ])
         .split(area);
-    let (tabs_area, main_area, status_area) = (split[0], split[1], split[2]);
+    let (header_area, tabs_area, main_area, status_area) =
+        (split[0], split[1], split[2], split[3]);
 
+    draw_header(frame, app, theme, header_area);
     draw_tabs(frame, app, theme, tabs_area);
 
-    let panes = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(45), Constraint::Percentage(55)])
-        .split(main_area);
-    draw_list(frame, app, theme, panes[0]);
     match app.tab {
-        Tab::Overview => draw_overview(frame, app, theme, panes[1]),
-        Tab::Logs => draw_logs(frame, app, theme, panes[1]),
+        Tab::Dashboard => draw_dashboard(frame, app, theme, main_area),
+        Tab::Metrics => draw_metrics(frame, app, theme, main_area),
+        Tab::Logs => draw_logs(frame, app, theme, main_area),
     }
 
     draw_status_bar(frame, app, theme, status_area);
@@ -50,16 +50,57 @@ pub fn draw(frame: &mut Frame, app: &mut App, theme: &Theme) {
     }
 }
 
+fn draw_header(frame: &mut Frame, app: &App, theme: &Theme, area: Rect) {
+    let title = Line::from(Span::styled(" mock-monitor ", theme.accent()));
+    let clock = Line::from(Span::styled(app.clock_str(), theme.muted()));
+
+    frame.render_widget(Paragraph::new(title).style(theme.status_bar()), area);
+    frame.render_widget(
+        Paragraph::new(clock)
+            .style(theme.status_bar())
+            .alignment(Alignment::Right),
+        area,
+    );
+}
+
 fn draw_tabs(frame: &mut Frame, app: &App, theme: &Theme, area: Rect) {
-    let titles = vec![Tab::Overview.label(), Tab::Logs.label()];
+    let titles = vec![
+        Tab::Dashboard.label(),
+        Tab::Metrics.label(),
+        Tab::Logs.label(),
+    ];
     let tabs = Tabs::new(titles)
         .select(match app.tab {
-            Tab::Overview => 0,
-            Tab::Logs => 1,
+            Tab::Dashboard => 0,
+            Tab::Metrics => 1,
+            Tab::Logs => 2,
         })
         .highlight_style(theme.accent())
         .divider("  ");
     frame.render_widget(tabs, area);
+}
+
+fn draw_dashboard(frame: &mut Frame, app: &mut App, theme: &Theme, area: Rect) {
+    let split = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Min(0), Constraint::Length(5)])
+        .split(area);
+    let (cols_area, logs_area) = (split[0], split[1]);
+
+    let cols = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Percentage(36),
+            Constraint::Percentage(36),
+            Constraint::Percentage(28),
+        ])
+        .split(cols_area);
+
+    draw_list(frame, app, theme, cols[0]);
+    draw_overview(frame, app, theme, cols[1]);
+    draw_barchart(frame, app, theme, cols[2]);
+
+    draw_logs(frame, app, theme, logs_area);
 }
 
 fn draw_list(frame: &mut Frame, app: &mut App, theme: &Theme, area: Rect) {
@@ -169,21 +210,59 @@ fn draw_overview(frame: &mut Frame, app: &App, theme: &Theme, area: Rect) {
     draw_sparkline(frame, &svc.cpu_history, theme.accent(), spark_rows[1]);
 }
 
-fn draw_gauge(frame: &mut Frame, ratio: f64, label: &str, style: ratatui::style::Style, area: Rect) {
-    let gauge = Gauge::default()
-        .ratio(ratio.clamp(0.0, 1.0))
-        .label(label)
-        .gauge_style(style)
-        .use_unicode(true);
-    frame.render_widget(gauge, area);
+fn draw_barchart(frame: &mut Frame, app: &App, theme: &Theme, area: Rect) {
+    let bars: Vec<Bar> = app
+        .services
+        .iter()
+        .map(|s| Bar::with_label(s.name.as_str(), s.cpu as u64))
+        .collect();
+
+    let chart = BarChart::new(bars)
+        .block(
+            Block::default()
+                .title(" CPU % ")
+                .borders(Borders::ALL)
+                .border_style(theme.border()),
+        )
+        .bar_width(2)
+        .bar_gap(1)
+        .bar_style(theme.accent())
+        .max(100)
+        .direction(Direction::Vertical);
+
+    frame.render_widget(chart, area);
 }
 
-fn draw_sparkline(frame: &mut Frame, data: &[u64], style: ratatui::style::Style, area: Rect) {
-    let spark = Sparkline::default()
-        .data(data)
-        .max(100)
-        .style(style);
-    frame.render_widget(spark, area);
+fn draw_metrics(frame: &mut Frame, app: &App, theme: &Theme, area: Rect) {
+    let Some(svc) = app.services.get(app.selected) else {
+        return;
+    };
+
+    let data: Vec<(f64, f64)> = svc
+        .cpu_history
+        .iter()
+        .enumerate()
+        .map(|(i, &v)| (i as f64, v as f64))
+        .collect();
+
+    let dataset = Dataset::default()
+        .name("cpu %")
+        .marker(Marker::Braille)
+        .graph_type(GraphType::Line)
+        .style(theme.accent())
+        .data(&data);
+
+    let chart = Chart::new(vec![dataset])
+        .block(
+            Block::default()
+                .title(format!(" {} · cpu history ", svc.name))
+                .borders(Borders::ALL)
+                .border_style(theme.border()),
+        )
+        .x_axis(Axis::default().bounds([0.0, 64.0]))
+        .y_axis(Axis::default().bounds([0.0, 100.0]).labels(["0", "50", "100"]));
+
+    frame.render_widget(chart, area);
 }
 
 fn draw_logs(frame: &mut Frame, app: &App, theme: &Theme, area: Rect) {
@@ -214,11 +293,8 @@ fn draw_status_bar(frame: &mut Frame, app: &App, theme: &Theme, area: Rect) {
         Span::raw("  "),
         Span::styled(
             match app.focus {
-                Focus::List => "list",
-                Focus::Detail => match app.tab {
-                    Tab::Overview => "overview",
-                    Tab::Logs => "logs",
-                },
+                Focus::List => "list".to_string(),
+                Focus::Detail => app.tab.label().to_lowercase(),
             },
             theme.accent(),
         ),
@@ -231,9 +307,25 @@ fn draw_status_bar(frame: &mut Frame, app: &App, theme: &Theme, area: Rect) {
 
     frame.render_widget(Paragraph::new(left).style(theme.status_bar()), area);
     frame.render_widget(
-        Paragraph::new(right).style(theme.status_bar()).alignment(Alignment::Right),
+        Paragraph::new(right)
+            .style(theme.status_bar())
+            .alignment(Alignment::Right),
         area,
     );
+}
+
+fn draw_gauge(frame: &mut Frame, ratio: f64, label: &str, style: ratatui::style::Style, area: Rect) {
+    let gauge = Gauge::default()
+        .ratio(ratio.clamp(0.0, 1.0))
+        .label(label)
+        .gauge_style(style)
+        .use_unicode(true);
+    frame.render_widget(gauge, area);
+}
+
+fn draw_sparkline(frame: &mut Frame, data: &[u64], style: ratatui::style::Style, area: Rect) {
+    let spark = Sparkline::default().data(data).max(100).style(style);
+    frame.render_widget(spark, area);
 }
 
 fn draw_help(frame: &mut Frame, theme: &Theme, area: Rect) {

@@ -54,14 +54,16 @@ pub enum Focus {
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Tab {
-    Overview,
+    Dashboard,
+    Metrics,
     Logs,
 }
 
 impl Tab {
     pub fn label(self) -> &'static str {
         match self {
-            Tab::Overview => "Overview",
+            Tab::Dashboard => "Dashboard",
+            Tab::Metrics => "Metrics",
             Tab::Logs => "Logs",
         }
     }
@@ -94,7 +96,7 @@ impl App {
             services: seed(),
             selected: 0,
             focus: Focus::List,
-            tab: Tab::Overview,
+            tab: Tab::Dashboard,
             show_help: false,
             toast: None,
             logs: Vec::new(),
@@ -180,6 +182,10 @@ impl App {
             .iter()
             .filter(|s| s.state == ServiceState::Running)
             .count()
+    }
+
+    pub fn clock_str(&self) -> String {
+        fmt_clock(self.clock)
     }
 
     pub fn set_toast(&mut self, text: String, kind: ToastKind) {

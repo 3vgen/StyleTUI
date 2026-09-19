@@ -118,8 +118,9 @@ fn handle_key(app: &mut App, key: KeyEvent, prev_g: &mut bool) -> bool {
         }
         KeyCode::Tab => {
             app.tab = match app.tab {
-                Tab::Overview => Tab::Logs,
-                Tab::Logs => Tab::Overview,
+                Tab::Dashboard => Tab::Metrics,
+                Tab::Metrics => Tab::Logs,
+                Tab::Logs => Tab::Dashboard,
             };
             *prev_g = false;
             false
