@@ -1,0 +1,9 @@
+[package]
+name = "tui-template"
+version = "0.1.0"
+edition = "2021"
+description = "Минимальный шаблон TUI на ratatui — mock-сервис по принципам style_tui"
+
+[dependencies]
+ratatui = "0.30"
+crossterm = "0.29"
